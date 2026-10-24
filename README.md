@@ -74,8 +74,9 @@ servicenow-e2e/
 │   │   ├── components/          # Forms, tables, status badges, attachment uploader
 │   │   ├── App.tsx
 │   │   └── main.tsx
-│   ├── vite.config.ts           # dev proxy /api -> Express
-│   └── package.json
+│   ├── index.html
+│   ├── tsconfig.json
+│   └── vite.config.ts           # root=client, dev proxy /api -> Express
 ├── server/                      # Express app
 │   ├── src/
 │   │   ├── config.ts            # env validation (zod)
@@ -92,9 +93,9 @@ servicenow-e2e/
 │   │   │   └── webhooks.ts      # inbound from ServiceNow
 │   │   ├── middleware/          # auth, error handler, rate limit, request id
 │   │   └── index.ts             # app bootstrap + static serving of client/dist
-│   └── package.json
+│   └── tsconfig.json
 ├── .env.example
-├── package.json                 # root scripts (workspaces)
+├── package.json                 # ONE common package.json for client + server
 └── README.md
 ```
 
@@ -187,11 +188,7 @@ Never commit `.env`. In production, load secrets from a vault (Azure Key Vault, 
 
 ### 6.1 Install
 
-```bash
-cd server
-npm i express axios express-session helmet compression express-rate-limit zod pino pino-http dotenv multer
-npm i -D typescript tsx @types/express @types/node @types/multer
-```
+All dependencies live in the single root `package.json` (see [Section 8](#8-common-packagejson)). Run `npm install` once from the repo root.
 
 ### 6.2 OAuth token cache — `server/src/servicenow/auth.ts`
 
@@ -459,21 +456,28 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
 
 ### 7.1 Install
 
-```bash
-npm create vite@latest client -- --template react-ts
-cd client
-npm i @tanstack/react-query react-router-dom react-hook-form zod @hookform/resolvers
-```
+No separate install — the client shares the root `package.json` and `node_modules`.
 
-### 7.2 Dev proxy — `client/vite.config.ts`
+### 7.2 Vite config — `client/vite.config.ts`
+
+Because there is only one `package.json` at the repo root, Vite is pointed at the `client/` folder explicitly.
 
 ```ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
 export default defineConfig({
+  root: path.resolve(__dirname),                 // client/
   plugins: [react()],
-  server: { proxy: { '/api': 'http://localhost:4000' } },
+  build: { outDir: 'dist', emptyOutDir: true },  // -> client/dist (served by Express)
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': 'http://localhost:4000',
+      '/webhooks': 'http://localhost:4000',
+    },
+  },
 });
 ```
 
@@ -554,25 +558,131 @@ Confirm values against your instance — customers often customize choice lists.
 
 ---
 
-## 8. Root Scripts
+## 8. Common package.json
 
-`package.json` (root)
+One `package.json` at the repo root holds every dependency and script for both the React client and the Express server. There are no `package.json` files inside `client/` or `server/`.
 
 ```json
 {
   "name": "servicenow-e2e",
+  "version": "1.0.0",
   "private": true,
-  "workspaces": ["client", "server"],
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
   "scripts": {
-    "dev": "concurrently -n server,client \"npm -w server run dev\" \"npm -w client run dev\"",
-    "build": "npm -w client run build && npm -w server run build",
-    "start": "node server/dist/index.js",
-    "test": "npm -w server test && npm -w client test",
-    "lint": "eslint ."
+    "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch --env-file=.env server/src/index.ts",
+    "dev:client": "vite --config client/vite.config.ts",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "tsc -p client/tsconfig.json --noEmit && vite build --config client/vite.config.ts",
+    "build:server": "tsc -p server/tsconfig.json",
+    "start": "node --env-file-if-exists=.env server/dist/index.js",
+    "preview": "npm run build && npm start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "lint": "eslint .",
+    "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p client/tsconfig.json --noEmit"
   },
-  "devDependencies": { "concurrently": "^9.0.0" }
+  "dependencies": {
+    "axios": "^1.7.0",
+    "compression": "^1.7.4",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "express-session": "^1.18.0",
+    "helmet": "^8.0.0",
+    "multer": "^1.4.5-lts.1",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "zod": "^3.23.0",
+
+    "@hookform/resolvers": "^3.9.0",
+    "@tanstack/react-query": "^5.59.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.53.0",
+    "react-router-dom": "^6.27.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/compression": "^1.7.5",
+    "@types/express": "^4.17.21",
+    "@types/express-session": "^1.18.0",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^20.16.0",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@types/supertest": "^6.0.2",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "eslint": "^9.12.0",
+    "jsdom": "^25.0.0",
+    "msw": "^2.4.0",
+    "nock": "^13.5.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
 }
 ```
+
+> Versions shown are a known-good baseline; run `npm outdated` and bump to current releases when you scaffold. In `dependencies`, the server packages come first and the client packages after the blank line. `npm install` will re-sort them alphabetically.
+
+### TypeScript configs
+
+The two halves still compile differently, so each keeps its own `tsconfig.json`.
+
+`server/tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "src",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
+```
+
+`client/tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src", "vite.config.ts"]
+}
+```
+
+### Script reference
+
+| Script | What it does |
+|---|---|
+| `npm run dev` | Runs Express (`:4000`, auto-reload via tsx) and Vite (`:5173`, HMR) together |
+| `npm run build` | Type-checks + builds React to `client/dist`, compiles server to `server/dist` |
+| `npm start` | Production: Express serves `/api`, `/webhooks` and the React build on one port |
+| `npm test` | Vitest for both server and client tests |
+| `npm run test:e2e` | Playwright against a running app |
+| `npm run typecheck` | Type-checks both projects without emitting |
 
 ### Run locally
 
