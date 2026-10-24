@@ -1,6 +1,3 @@
-# RPaaS
-release page as a service.
-
 # ServiceNow E2E Integration — React + Express
 
 An end-to-end plan and reference implementation for managing ServiceNow records (Incidents, Change Requests, Service Catalog Requests, Tasks, Attachments) from a React application, backed by an Express server that lives in the same repository and serves the React build in production.
@@ -22,14 +19,35 @@ An end-to-end plan and reference implementation for managing ServiceNow records 
 ## 2. Architecture
 
 ```
-┌──────────────────────┐        HTTPS         ┌────────────────────────────┐       HTTPS / OAuth 2.0      ┌──────────────────────┐
-│  React (Vite) SPA    │ ───────────────────▶ │  Express server            │ ───────────────────────────▶ │  ServiceNow instance │
-│  - React Router      │   /api/* (session)   │  - Auth (session / SSO)    │   Table API, Attachment API, │  - Table API         │
-│  - TanStack Query    │ ◀─────────────────── │  - ServiceNow client       │   Service Catalog API        │  - Business Rules    │
-│  - EventSource (SSE) │   /api/events (SSE)  │  - Token cache + refresh   │ ◀─────────────────────────── │  - Outbound REST     │
-└──────────────────────┘                      │  - Webhook receiver        │   POST /webhooks/servicenow  └──────────────────────┘
-                                              │  - Serves client/dist      │
-                                              └────────────────────────────┘
+            ┌────────────────────────────────┐
+            │      React (Vite) SPA          │
+            │  - React Router                │
+            │  - TanStack Query              │
+            │  - EventSource (SSE)           │
+            └────────────────────────────────┘
+                 │                     ▲
+   HTTPS /api/*  │                     │  SSE /api/events
+   (session)     │                     │  (live updates)
+                 ▼                     │
+            ┌────────────────────────────────┐
+            │        Express server          │
+            │  - Auth (session / SSO)        │
+            │  - ServiceNow client           │
+            │  - Token cache + refresh       │
+            │  - Webhook receiver            │
+            │  - Serves client/dist          │
+            └────────────────────────────────┘
+                 │                     ▲
+ HTTPS + OAuth   │                     │  POST /webhooks/servicenow
+ Table API,      │                     │  (Business Rule →
+ Attachment API, │                     │   Outbound REST, HMAC signed)
+ Catalog API     ▼                     │
+            ┌────────────────────────────────┐
+            │      ServiceNow instance       │
+            │  - Table API                   │
+            │  - Business Rules              │
+            │  - Outbound REST               │
+            └────────────────────────────────┘
 ```
 
 **Flow summary**
@@ -639,4 +657,3 @@ NODE_ENV=production npm start   # Express serves /api and the React build on one
 | Display values missing | `sysparm_display_value` not set | Use `all` to get both `value` and `display_value` |
 | Webhooks not arriving | Business Rule not async, wrong endpoint, MID server needed for private networks | Check Outbound HTTP log (`sys_outbound_http_log`) |
 | `429 Too Many Requests` | Instance rate-limit rules | Backoff honours `Retry-After`; reduce polling; batch reads |
-
